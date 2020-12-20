@@ -1,0 +1,515 @@
+---
+title: 
+   <center><h2> Google Play Store Analytics with R </h2></center>
+subtitle: 
+   <center><h3> Midterm Report </h3> </center>
+author: 
+  <center><h5> Group3- Sumadhuri Damerla,Shaoor Jan,Ashjan Khan </h5> </center>
+output: 
+   html_document: 
+    theme: cosmo
+    highlight: monochrome
+    toc: true
+    toc_float: true
+    toc_collapsed: true
+    toc_depth: 4
+    fig_caption: true
+    number_sections: true
+    df_print: paged
+---
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=10, fig.height=8,echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+# Introduction to the dataset  
+## Data source
+The data source used for this analysis is the *2018 google play store*(https://www.kaggle.com/lava18/google-play-store-apps) collected from Kaggle.
+
+## Description of the dataset
+The dataset is a collection of web-scraped data of 10,000 apps from Google Play Store. Google Play Store originally referred as the Android Market, is Google's official store and portal for Android apps, games and other content for Android-powered phone, tablet or Android TV device. As of May 2017, it has over two billion monthly active users, the largest installed base of any operating system, and as of January 2020, the Google Play Store features over 2.9 million apps[13].
+
+The variables of the dataset are as follows:
+
+1)	App (Name) – Name/Title of the application
+2)	Category (App)- Category/Domain to which  the app belongs to
+3)	Rating (App)- Overall user rating of the app
+4)	Reviews (User)- Number of user reviews for the app 
+5)	Size (App)- Space or memory that the app takes up 
+6)	Installs (App)- Number of user downloads/installs 
+7)	Type (Free/Paid)-Apps may be free or paid depending on the developer’s choice
+8)	Price (App)-Price of the app if not free
+9)	Content Rating -  Age group the app is based off at - Children / Mature 21+ / Adult
+10)	Genres (Detailed Category)- An app can belong to multiple genres, For eg, a musical family game will belong to Music, Game, Family genres.
+11)	Last Updated (App)- Date when the app was last updated on Play Store 
+12)	Current Version (App)- Current version of the app available on Play Store  
+13)	Android Version (Support) – minimum version of android it takes to have the app on the device
+
+
+# Purpose of the project
+ + The aim of our project is to find out if we can predict ratings of an app based on different variables and we intend to summarise the different factors that influence the success of an app.These analysis might also help the developer community to build more successful apps by taking accurate data-based decisions, and focusing on those aspects of applications that matters most.
+
+ + Also,since this is the first time we are doing data analysis using R, it is a fun way to learn and  to strengthen the concepts learned during the course by taking a hands-on approach.
+
+# Intended audience of the project
+ + We believe there's a diverse set of audience who might be interested in our project. As of Febraury 2020, 73.3% of the mobile operating system market share belongs to Android devices[11]. This large community consists of the general public who use android devices and appstore,the developer community and anyone who wants to understand how the app market works.
+
+ + This project is primarily intended for the growing developer community. It will help them make data backed decisions before launching their application. Besides developers, it is also helpful for tech journalists, Google Play Store users or any other interested party. 
+
+```{r global-option}
+knitr::opts_chunk$set(fig.width=10, fig.height=8,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r load-libraries}
+library(tidyverse)
+library(dplyr)
+library(stringr)
+require(ggExtra) # For marginal graphs
+require(GGally) #for correlation plot
+theme_set(theme_light())
+library(shiny)
+
+```
+
+```{r custom-color-pallete}
+# reference: https://drsimonj.svbtle.com/creating-corporate-colour-palettes-for-ggplot2
+
+custom_colors <- c(
+  `red`             = "#d11141",
+  `blueish green`   = "#009E73",
+  `blue`            = "#0072B2",
+  `sky blue`        = "#56B4E9",
+  `orange`          = "#E69F00",
+  `vermillion`      = "#D55E00",
+  `yellow`          = "#009E73",
+  `grey`            = "#999999",
+  `reddish purple`  = "#CC79A7"
+)
+
+custom_cols <- function(...) {
+  cols <- c(...)
+  
+  if (is.null(cols))
+    return (custom_colors)
+  
+  custom_colors[cols]
+}
+
+custom_palettes <- list(
+  `main`  = custom_cols("blue", "green", "yellow"),
+  
+  `cool`  = custom_cols("blue", "green"),
+  
+  `hot`   = custom_cols("yellow", "orange", "red"),
+  
+  `mixed` = custom_cols("blue", "green", "yellow", "orange", "red"),
+  
+  `grey`  = custom_cols("light grey", "dark grey")
+)
+
+custom_pal <- function(palette = "main", reverse = FALSE, ...) {
+  pal <- custom_palettes[[palette]]
+  
+  if (reverse) pal <- rev(pal)
+  
+  colorRampPalette(pal, ...)
+}
+
+scale_color <- function(palette = "main", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+  
+  if (discrete) {
+    discrete_scale("colour", paste0("drsimonj_", palette), palette = pal, ...)
+  } else {
+    scale_color_gradientn(colours = pal(256), ...)
+  }
+}
+
+scale_fill <- function(palette = "main", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- custom_pal(palette = palette, reverse = reverse)
+  
+  if (discrete) {
+    discrete_scale("fill", paste0("drsimonj_", palette), palette = pal, ...)
+  } else {
+    scale_fill_gradientn(colours = pal(256), ...)
+  }
+}
+```
+
+```{r loading-data}
+clean_play_store <- read_csv("data/tidyplaystore.csv") #read_csv returns a dataframe
+```
+
+# Exploratory Data Analysis to find factors for success of an app
+Generally, the most successful apps have high ratings and high installs.To look at which app makes it to the top, we consider ratings and installs, so we explore these to find any relationship or trends
+
+## Rating column in depth 
+### Distribution of rating  
+```{r rating-density-plot}
+#Density plot
+clean_play_store %>%
+  ggplot(aes(x = rating)) +
+  geom_density(aes(fill = factor(types)), alpha = 0.5) + #types correspond to paid/free
+  labs(title = "Density plot",
+       subtitle = "App Rating grouped by types",
+       y = "Values",
+       x = "Rating",
+       caption = "Source: google play store dataset",
+       fill = "#Types") +
+   theme(axis.text.x = element_text(vjust=0.5))
+```
+
++ We can observe that the number of apps with low ratings are less in number, and most apps have a ratings between 3-5.
+
+First, we plot correlograms of ratings versus different columns to find any relationship. Correlograms are useful to understand the relationship between different numerical variables. If the correlogram index is 1, it means that the variables are directly proportional to each other.  
+
+### Correlogram plots {.tabset .tabset-fade .tabset-pills}  
+#### Rating vs Reviews  
+````{r rating-reviews-plot}
+clean_play_store$Reviews <- log(clean_play_store$reviews) #transforming the reviews value to logarithmic values
+
+clean_play_store %>%
+  select(rating, Reviews) %>%
+  ggpairs(
+          mapping = ggplot2::aes(color = "types")) +
+  labs(title = "Correlogram",
+       subtitle = "Rating vs Reviews",
+       caption = "Source: google play store dataset") 
+```
+
+#### Rating vs Size
+````{r rating-size-plot}
+clean_play_store %>%
+  select(rating, size_mb) %>%
+  ggpairs(
+          mapping = ggplot2::aes(color = "types")) +
+  labs(title = "Correlogram",
+       subtitle = "Rating vs Size (MB)",
+        caption = "Source: google play store dataset") 
+```
+
+#### Rating vs Installs
+````{r rating-installs-plot}
+clean_play_store$Installs <- log(clean_play_store$installs) #transforming the installs values to logarithmic values
+
+clean_play_store %>%
+  select(rating, Installs) %>%
+  ggpairs(mapping = ggplot2::aes(color = "types")) +
+  labs(title = "Correlogram",
+       subtitle = "Rating vs Installs",
+       caption = "Source: google play store dataset")
+```
+
+#### Rating vs Price
+````{r rating-price-plot}
+clean_play_store$Price <- log(clean_play_store$price) #transforming the price value to logarithmic values
+
+clean_play_store %>%
+  select(rating, Price) %>%
+  ggpairs(mapping = ggplot2::aes(color = "types")) +
+  labs(title = "Correlogram",
+       subtitle = "Rating vs Price",
+       caption = "Source: google play store dataset")
+```
+
+#### Rating vs Types  
+````{r rating-types-plot}
+clean_play_store$types <- as.factor(clean_play_store$types) #changing the types column to factor
+
+clean_play_store %>%
+  select(rating, types) %>%
+  ggpairs(mapping = ggplot2::aes(color = "types")) +
+  labs(title = "Correlogram",
+       subtitle = "Rating vs Types",
+       caption = "Source: google play store dataset")
+```
+
+**Finding:**  
+ + Each correlation index talks about the relationship between plotted columns. If the index is 1, it means they have linear relationship 
+ + Each plot on the diagonal refers to the density plot of the respective column  
+ + We can observe that there is no significant linear relationship between rating and the plotted numerical variables.  
+
+
+### Plot of reviews vs app ratings
+``` {r review-rating-plot}
+ggplot(data = clean_play_store) +
+  geom_point(mapping = aes(x = rating, y = reviews, col = types)) +
+  scale_color(palette = "hot") +
+  scale_y_continuous(trans = 'log10', labels = scales::comma) +
+  labs(title = "Dot plot",
+       subtitle = "Android App Ratings vs Number of Reviews",
+       x = "Rating from 1 to 5 stars",
+       y = "Number of Reviews",
+       caption = "Source: google play store dataset",
+       fill = "Types") +
+ theme(legend.title = element_text(hjust = 0.5, face="bold", size = 10))
+```
+
+
+**Finding:** We can observe that the number of reviews influence the ratings. Generally, as the number of reviews increase, the rating is higher.
+
+
+We now explore other factors that might potentially influence rating
+
+### App rating vs category  
+To check the relationship between category and rating, we plotted a box plot with rating on y-axis and category on x-axis.   
+```{r rating-category-plot}
+clean_play_store %>%
+  ggplot(aes(x = reorder(category,rating), y = rating))+
+  geom_boxplot(aes(fill = category)) +
+  scale_fill(palette = "main") +
+  labs(title = "Boxplot",
+       subtitle = "Android App Ratings by category",
+       x = "Category",
+       y = "Rating",
+       caption = "Source: google play store dataset") +
+   theme(axis.text.x = element_text(angle = 90),
+         legend.position = "None")
+```
+
+**Finding:** This graph shows that for some categories like TOOLS, FAMILY, FINANCE and LIFESTYLE a great majority of applications fall below first quartile. Thus, even though median rating is high, deviation from median is significant.
+
+
+### Distribution of rating for 8 categories with the largest numbers of apps   
+Here we look at the distribution of rating across different categories. We chose 8 categories with the largest number of applications.  
+```{r avg-rating-distributionplot}
+# Distribution of rating for 8 categories with the largest numbers of apps
+clean_play_store %>% 
+ filter( category == c("FAMILY", "GAME", "TOOLS","MEDICAL", " BUSINESS", "PRODUCTIVITY", "FINANCE", "COMMUNICATION", "SPORTS")) %>% 
+  ggplot(aes(x = rating)) +
+  geom_bar(fill = custom_cols("blueish green"), na.rm = TRUE) + 
+  facet_wrap(~category,  ncol = 4, nrow = 4,  shrink = TRUE) +
+  labs(title = "Facet plot",
+       subtitle = "Distribution of rating for 8 categories with the highest numbers of apps",
+       x = "Rating",
+       y = "Count",
+       caption = "Source: google play store dataset")
+```
+
+**Finding:** The distribution of rating varies significantly across each category.  
+
+### Average rating per category 
+In previous graph we observed that distribution of rating as per category varies significantly. Now we want to find out what the average rating per category is. 
+```{r avgrating-categoryplot}
+# Average rating per category
+clean_play_store %>% 
+  select(c("category", "rating")) %>% 
+  group_by(category) %>% 
+  summarise(rating = mean(rating, na.rm = TRUE)) %>% 
+  ggplot(aes(x = reorder(category, - rating) , rating)) + 
+  geom_col(width = 0.5, fill = custom_cols("sky blue")) +
+  ggtitle("Average Rating Per Category") +
+  labs(title = "Bar Chart",
+       subtitle = "Average Rating Per Category",
+       y = "Rating", 
+       x = "Category",
+      caption = "Source: google play store dataset") +
+  theme(axis.text.x = element_text(angle = 90),
+        legend.position = "none" ) 
+```
+
+**Finding:** This graph shows that the average rating per category is not very different. Still the "EVENTS" category has the highest average rating, and "DATING" category has the least average rating. 
+
+### Size and rating  
+Size is an important aspect, and we want to see the relationship between size and rating of an application. 
+```{r size-rating-plot}
+plot <- clean_play_store %>% 
+  ggplot(aes(x = size_mb, y = rating, na.rm = TRUE)) + 
+  geom_point(color = custom_cols("blueish green"),na.rm = TRUE) +
+  labs(title = "Marginal Plot",
+       subtitle = "Size Vs Rating",
+       y = "Rating", 
+       x = "Size (MB)",
+      caption = "Source: google play store dataset") 
+
+ ggMarginal(plot, type = "histogram", fill = custom_cols("blueish green"), alpha = 0.6)
+```
+
+**Finding:** We can see that majority of applications with their sizes under 25 MB, have a good rating(4).
+
+
+## Installs column in depth   
+
+### Number of installs {.tabset .tabset-fade .tabset-pill}
+
+#### Number of installs per category
+```{r installs-percategory}
+clean_play_store%>%
+  count(category, installs, types) %>%
+  group_by(category, types) %>%
+  summarize(
+    totalInstalls = sum(as.numeric(installs))
+  ) %>%
+  ggplot(aes(x = reorder(category, totalInstalls), y = log(totalInstalls), fill = types)) +
+  geom_bar(width = 0.5,stat = "identity") +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Bar Chart",
+       subtitle = "Number of Installs per Category",
+       x = "Category",
+       y = "Number of Installs(log)",
+       caption = "Source: google play store dataset") +
+  scale_fill(palette = "main") +
+  theme(axis.text.x = element_text(angle = 90)) 
+```
+
+**Finding:** The graph shows the log of number of installs (the values of installs varied from 0 to 1 billion) vs CATEGORY. FAMILY and GAME has the highest number of installs. EVENTS, HOUSE_AND_HOME, COMICS, LIBRARIES_AND_DESIGN and BEAUTY have the least number of installs.
+
+#### Top 10 installed categories  
+Top 10 categories with greatest number of installs. 
+```{r top10-installed-categories}
+clean_play_store%>%
+  count(category, installs) %>%
+  group_by(category) %>%
+  summarize(
+    totalInstalls = sum(as.numeric(installs))
+  ) %>%
+  arrange(-totalInstalls) %>%
+  head(10) %>%
+  ggplot(aes(x = reorder(category, -totalInstalls), y = totalInstalls, fill = custom_cols("red"))) +
+  geom_bar(width = 0.5, fill = custom_cols("blueish green"), stat = "identity") +
+  labs(title = "Bar Chart",
+       subtitle = "Top 10 Installed Categories",
+       x = "Category",
+       y = "Number of Installs",
+       caption = "Source: google play store dataset") +
+  scale_y_continuous(labels = scales::comma) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5),
+        legend.position = "None") 
+```
+
+**Finding:** COMMUNICATION has the highest number of installs. 
+
+#### 10 least installed categories
+```{r bottom10-installed-categories}
+clean_play_store%>%
+  count(category, installs) %>%
+  group_by(category) %>%
+  summarize(
+    totalInstalls = sum(as.numeric(installs))
+  ) %>%
+  arrange(-totalInstalls) %>%
+  tail(10) %>%
+  ggplot(aes(x = reorder(category, totalInstalls), y = totalInstalls)) +
+  geom_bar(width = 0.5, fill = custom_cols("vermillion"), stat = "identity") +
+  labs(title = "Bar Chart",
+       subtitle = "10 Least Installed Categories",
+       x = "Category",
+       y = "Number of Installs",
+       caption = "Source: google play store dataset") +
+  scale_y_continuous(labels = scales::comma) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5),
+        legend.position = "None") 
+```
+
+**Finding:** Events has the least number of installed applications. 
+
+### Top 10 paid Categories
+Top 10 categories with the highest number of installs for paid applications.   
+```{r top-paid-categories-plot}
+clean_play_store %>%
+  filter(types == "Paid") %>%
+  group_by(category) %>%
+  summarize(totalInstalls = sum(installs)) %>%
+  arrange(desc(totalInstalls)) %>%
+  head(10) %>%
+  ggplot(aes(x = reorder(category, -totalInstalls) , y = totalInstalls)) +
+  geom_bar( fill = custom_cols("blueish green"), stat = "identity", width = 0.5) +
+  labs(title = "Bar Chart",
+       subtitle = "Top 10 Paid Categories",
+       x = "Category",
+       y = "Number of Installs",
+       caption = "Source: google play store dataset") +
+  scale_y_continuous(labels = scales::comma) +
+  theme(axis.text.x = element_text(angle = 65, vjust = 0.5),
+        legend.position = "None") 
+```
+
+**Finding:** FAMILY and GAME has the greatest number of installs. 
+
+### Size Vs. number of installs    
+Size is an important characteristic of an application. Large applications might reduce the number of installs, as it reduces to targeted audience. We can test this by plotting size against installs. 
+```{r size-installs-plot}
+plot <- clean_play_store %>% 
+  filter(!is.na(size_mb) ) %>% 
+  ggplot(aes(x = size_mb, y = log(installs + 0.005), na.rm = TRUE)) + 
+  geom_point(color = custom_cols("vermillion"), na.rm = TRUE) + 
+  labs(title = "Marginal Plot",
+       subtitle = "Size Vs Number of Installs",
+       y = "No. of Installs (Log)", 
+       x = "Size (MB)",
+      caption = "Source: google play store dataset")
+  ggMarginal(plot, type = "histogram", fill = custom_cols("vermillion"), alpha = 0.6)
+```
+
+**Finding:** Optimally sized Applications, with sizes between 5MB and 30MB, gets the greatest number of installs. 
+
+
+### Number of installs based on support by minimum android version
+```{r android_ver,warning=FALSE,message=FALSE}
+clean_play_store %>%
+  ggplot(aes(x = min_android_ver, fill = types )) +
+  geom_bar(width = .5, alpha = 0.7, na.rm = TRUE) +
+  labs(title = "Bar Chart",
+       subtitle = "Installs Based on Min. Android Version",
+       x = "Min. Android Version",
+       y = "Count",
+       caption = "Source: google play store dataset",
+       fill = "Types") +
+ theme(legend.title = element_text(hjust = 0.5, face="bold", size = 10),
+       axis.text.x = element_text(angle = 90))
+```
+
+**Finding:** 4.1 android version has the maximum number of installs.
+
+
+# Conclusion 
+ + To get most success from an app, it has to have maximum number of reviews and maximum number of ratings. These are the other trends we found:  
+   * Apps should atleast support 4.1 android version or more to succeed.This is expected because the majority of users have smart phones with constant android updates.  
+   * They have high chances of success if the genre is family, game, communication or productivity apps whereas food_and_drink, auto_vehicles categories have very low probability to succeed.  
+   * The apps which are be free have huge success rates however there are a few exceptions to this.  
+   * Apps should be optimally sized between 5MB and 30MB.  
+
+
+
+# Future work (models)  
+## What are we trying to achieve (thesis/hypothesis)
+The dataset we have contains information about 10000 apps dated till 2018. With the dataset, we plan on using Clustering Model, Forecast Model and Random Forest to perform predictive analysis. We want to answer the following hypothesis:  
+
+1) Find similarities in apps that make it to the top of Play Store. Factors contributing to the success of applications.
+2) Can we predict rating of apps based on other parameters such as number of reviews or the size of an app?
+
+To answer these questions, we will be exploring all the variables of this dataset to find if there's any relationship between rating and other variables. We intend to find out which of these variables will play the most important role in predicting rating.
+ 
+
+## Why is this important/interesting?
+Before we started this project, we took part in a competition called game-jam [12] where we built a game,we had an idea of launching it on Google Play Store.We then thought it would be interesting to see currents trends in the market and to do a detailed analysis to get more insights to the following questions:  
+1.Factors that influence the success of an app,    
+2.Which categories are highly installed    
+3.What are the most famous applications and do they have any trends in common like number of installs, number of reviews, size or android-version? and etc  
+
+These analysis inturn will aid the developer community to build successful apps targeting a specific audience.
+
+
+## How are we going to test the hypothesis?
+Since the dataset is dated till 2018.  We are thinking to test it by comparing the predictions of our model with the 2019 dataset or the latest dataset. 
+
+
+## Any challenges that we might encounter
+There is a lot of useful information that could have given us more insight into the Play Store market e.g. Demographic data could have offered insights into the rating and number of installs of apps, with respect to different regions,  different cultures and different trends popular to specific age groups. Also, it would have been interesting to see how different global trends affect the usage of the app, for instance, the current pandemic "covid-19" has called for quarantine across the globe and many people, markets and other companies are relying on smart phones and virtual connections, this will heavily increase the use of many applications, thus deviating from the general trend. 
+
+
+# References
+
+[1] [Dataset](https://www.kaggle.com/lava18/google-play-store-apps);  
+[2] [R markdown](https://bookdown.org/yihui/rmarkdown/html-document.html#tabbed-sections) ;  
+[3] [Stackoverflow](https://stackoverflow.com/questions/3993301/how-to-format-number-values-for-ggplot2-legend/15007117) ;  
+[4] [GGally](https://ggobi.github.io/ggally/rd.html#ggpairs);  
+[5] [Custom color pallete](https://drsimonj.svbtle.com/creating-corporate-colour-palettes-for-ggplot2);  
+[6] [Tidying data](https://medium.com/coinmonks/dealing-with-missing-data-using-r-3ae428da2d17);  
+[7] [Colors](https://hbr.org/2014/04/the-right-colors-make-data-easier-to-read);  
+[8] [TidyVerse](https://www.tidyverse.org/);  
+[9] [ggplot2](https://ggplot2.tidyverse.org/reference/);  
+[10] [Google playstore Kernel by Danilodiogo](https://www.kaggle.com/danilodiogo/google-play-store-eda-plotting-with-highcharts/code#eda);  
+[11] [market share](https://gs.statcounter.com/os-market-share/mobile/worldwide) ;  
+[12] [Global game jam](https://globalgamejam.org/) ;  
+[13] [Play Store Statistics](https://www.statista.com/statistics/266210/number-of-available-applications-in-the-google-play-store/) ;  

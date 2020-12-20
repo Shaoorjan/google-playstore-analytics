@@ -1,0 +1,445 @@
+---
+output: html_document
+runtime: shiny
+---
+
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width = 10,
+  fig.height = 8,
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE)
+```
+
+
+```{r load-libraries}
+library(tidyverse)
+library(dplyr)
+library(stringr)
+require(ggExtra) # For marginal graphs
+require(GGally) #for correlation plot
+library(shiny)
+library(wordcloud2)
+library(shinythemes)
+library(rpart)
+set.seed(123)
+library(moderndive)
+library(ggpubr)
+library(plotly)
+
+```
+
+```{r loading-data}
+clean_play_store <-
+  read_csv("data/tidyplaystore.csv") #read_csv returns a dataframe
+
+```
+
+```{r custom-color-pallete}
+# reference: https://drsimonj.svbtle.com/creating-corporate-colour-palettes-for-ggplot2
+
+custom_colors <- c(
+  `red`             = "#d11141",
+  `blueish green`   = "#009E73",
+  `blue`            = "#0072B2",
+  `sky blue`        = "#56B4E9",
+  `orange`          = "#E69F00",
+  `vermillion`      = "#D55E00",
+  `yellow`          = "#009E73",
+  `grey`            = "#999999",
+  `reddish purple`  = "#CC79A7"
+)
+
+custom_cols <- function(...) {
+  cols <- c(...)
+  
+  if (is.null(cols))
+    return (custom_colors)
+  
+  custom_colors[cols]
+}
+
+custom_palettes <- list(
+  `main`  = custom_cols("blue", "green", "yellow"),
+  
+  `cool`  = custom_cols("blue", "green"),
+  
+  `hot`   = custom_cols("yellow", "orange", "red"),
+  
+  `mixed` = custom_cols("blue", "green", "yellow", "orange", "red"),
+  
+  `grey`  = custom_cols("light grey", "dark grey")
+)
+
+custom_pal <- function(palette = "main",
+                       reverse = FALSE,
+                       ...) {
+  pal <- custom_palettes[[palette]]
+  
+  if (reverse)
+    pal <- rev(pal)
+  
+  colorRampPalette(pal, ...)
+}
+
+scale_color <-
+  function(palette = "main",
+           discrete = TRUE,
+           reverse = FALSE,
+           ...) {
+    pal <- custom_pal(palette = palette, reverse = reverse)
+    
+    if (discrete) {
+      discrete_scale("colour", paste0("drsimonj_", palette), palette = pal, ...)
+    } else {
+      scale_color_gradientn(colours = pal(256), ...)
+    }
+  }
+
+scale_fill <-
+  function(palette = "main",
+           discrete = TRUE,
+           reverse = FALSE,
+           ...) {
+    pal <- custom_pal(palette = palette, reverse = reverse)
+    
+    if (discrete) {
+      discrete_scale("fill", paste0("drsimonj_", palette), palette = pal, ...)
+    } else {
+      scale_fill_gradientn(colours = pal(256), ...)
+    }
+  }
+```
+
+
+```{r function for wordcloud}
+library(tm)
+library(tmap)
+create_wordcloud <-
+  function(data,
+           num_words = 100,
+           background = "white") {
+    # If text is provided, convert it to a dataframe of word frequencies
+    if (is.character(data)) {
+      corpus <- Corpus(VectorSource(data))
+      corpus <- tm_map(corpus, tolower)
+      corpus <- tm_map(corpus, removePunctuation)
+      corpus <- tm_map(corpus, removeNumbers)
+      corpus <- tm_map(corpus, removeWords, stopwords("english"))
+      tdm <- as.matrix(TermDocumentMatrix(corpus))
+      data <- sort(rowSums(tdm), decreasing = TRUE)
+      data <-
+        data.frame(word = names(data), freq = as.numeric(data))
+    }
+    
+    # Make sure a proper num_words is provided
+    if (!is.numeric(num_words) || num_words < 3) {
+      num_words <- 3
+    }
+    
+    # Grab the top n most common words
+    data <- head(data, n = num_words)
+    if (nrow(data) == 0) {
+      return(NULL)
+    }
+    
+    wordcloud2(data, backgroundColor = background)
+  }
+```
+
+
+```{r ui-code}
+ui <- navbarPage(
+  title = "Google play store analytics",
+  position = c("static-top", "fixed-top", "fixed-bottom"),
+  tabPanel("Visualise",
+           sidebarLayout(
+             sidebarPanel(
+               # CODE BELOW: Add various inputs in the UI
+               #To select rating
+               sliderInput(
+                 'rating',
+                 "Select Rating",
+                 min = 0,
+                 max = 5,
+                 value = c(0, 5)
+               ),
+                #To select categories
+               sliderInput('nb_categories', 'Select No. of Categories', 1, 15, 1),
+               #To enable sorting on the output
+               radioButtons(
+                 'category_sort',
+                 'Sort by',
+                 c("Top installed categories", "Least installed categories"),
+                 selected = "Top installed categories"
+               ),
+               #To select content rating
+               selectInput(
+                 'content_rating',
+                 'Select Content Rating',
+                 c("All", "Mature", "Everyone", "Teen")
+               ),
+               #Conditional panel: To select either free/paid or both types of apps
+               conditionalPanel(
+                 condition = "input.content_rating == 'All'",
+                 radioButtons('type_sel', 'Type', c("Free", "Paid", "Both"), selected =
+                                "Free")
+               )
+             ),
+             mainPanel(tabsetPanel(
+               # CODE BELOW: Add a plotly output named "plot_top_categories"
+               tabPanel(
+                 'Plot',
+                 plotly::plotlyOutput('plot_top_categories'),
+                 h4(textOutput('inputs'), style = "color: grey")
+               ),
+               # CODE BELOW: Add a data table output named "dt_top_categories"
+               tabPanel('Table',
+                        DT::DTOutput('dt_top_categories')),
+               # CODE BELOW: Add a word cloud output named "Word Cloud"
+               tabPanel(
+                 "Word Cloud" ,
+                 "Wordcloud of different categories having the maximum number of apps",
+                 wordcloud2Output(outputId = "cloud")
+               )
+             ))
+           )),
+  #-------------code below: Second tab: to predict rating of an app-------------------
+  tabPanel("Predict rating of your app",
+           sidebarLayout(
+             sidebarPanel(
+               selectInput(
+                 'model',
+                 'Choose model',
+                 c("Linear Regression", "Recursive partitioning")
+               ),
+               numericInput(
+                 'reviews',
+                 'Number of reviews',
+                 value = 1000,
+                 min = 0
+               ),
+               numericInput(
+                 'installs',
+                 'Number of installs',
+                 value = 1000,
+                 min = 0
+               ),
+               selectInput('category', 'Category', unique(clean_play_store$category)),
+               radioButtons('types', 'Paid/Free', c("Free", "Paid"), selected =
+                              "Free")
+             ),
+             mainPanel(h3(textOutput('rating_predict')))
+           )),
+  #-------------code below: Third tab: to compare different models based on user input-------------------
+  tabPanel("Compare models",
+           sidebarLayout(
+             sidebarPanel(
+               #code below: various inputs are added
+               radioButtons(
+                 'radio_btn',
+                 "Select Model",
+                 c(
+                   "Linear Regression" = 1 ,
+                   "Recursive partitioning" = 2 ,
+                   "Local Regression"  = 3
+                 ),
+               ),
+               selectInput('x_inp', 'X axis', c("Reviews", "Installs", "Size(MB)"))
+             ),
+             #code below: displays outputs
+             mainPanel(h3(textOutput('heading_model')),
+                       plotly::plotlyOutput('compare_models'),)
+           ))
+)
+```
+
+
+```{r server-code}
+server <- function(input, output, session) {
+  
+  #-----EDA/Visualisation part-----------------------------------------------------------------------------
+  # CODE BELOW: Add a reactive expression named `rval_top_categories` that filters for the selected content_rating, rating and other inputs
+  #Add a reactive variable as the filtered dataframe
+  rval_top_categories <- reactive({
+    temp_df <- clean_play_store #create a temporary dataframe
+    #Filter content rating based on user input
+    if (input$content_rating != "All") {
+      temp_df <- temp_df %>%
+        filter(content_rating == input$content_rating)
+    } 
+    #filter rating to be in the range selected by the user
+    temp_df <- temp_df[temp_df$rating >= input$rating[1] & temp_df$rating<=input$rating[2],] 
+    
+    #filter type to the input selected by the user
+    if (input$type_sel != "Both") {
+      temp_df <- temp_df %>%
+        filter(types == input$type_sel)
+    } 
+    
+    #logic to group dataset based on category and type.
+    #sort by top or least installed categories based on user input
+    if (input$category_sort == "Top installed categories") {
+      temp_df %>%
+        group_by(category) %>%
+        summarize(totalInstalls = sum(as.numeric(installs))) %>%
+        arrange(-totalInstalls) %>%
+        head(input$nb_categories)
+    }
+    else if (input$category_sort == "Least installed categories") {
+      temp_df %>%
+        group_by(category) %>%
+        summarize(totalInstalls = sum(as.numeric(installs))) %>%
+        arrange(totalInstalls) %>%
+        head(input$nb_categories)
+    }
+      
+  })
+  
+  # CODE BELOW: Render a horizontal bar plot of filtered dataset categories vs installs and
+  #  assign it to an output named plot_top_categories`
+  output$plot_top_categories <- plotly::renderPlotly({
+    ggplotly(
+     rval_top_categories() %>%
+      ggplot(aes(
+        x = reorder(category, totalInstalls),
+        y = totalInstalls/1000000,
+        text = paste("Category: ", category , "<br> Installs: ", totalInstalls ),
+      )) +
+      geom_bar(width = 0.5, stat = "identity",fill = custom_cols("vermillion")) +
+      labs(
+        title = "Bar Chart",
+        x = "Category",
+        y = "Number of Installs(Million)",
+        caption = "Source: google play store dataset"
+      ) +
+      scale_y_continuous(labels = scales::comma) +
+      theme(axis.text.x = element_text(angle = 360, vjust = 0.5),
+            legend.position = "None") + 
+      coord_flip(),
+     tooltip = "text"
+    )
+  })
+  
+  # code below: logic to render the data table of the filtered dataset
+  output$dt_top_categories <- DT::renderDT({
+    rval_top_categories()
+  })
+  
+  # Render the word cloud and assign it to the output list
+  output$cloud <- renderWordcloud2({
+    if (input$content_rating != "All") {
+      temp_df1 <- clean_play_store %>%
+        filter(content_rating == input$content_rating)
+    }
+    temp_df1 <- clean_play_store %>%
+      filter(rating %in% input$rating[1]:input$rating[2])
+    # Create a word cloud object
+    create_wordcloud(temp_df1$category, num_words = input$nb_categories)
+  })
+  
+  
+  
+  #-----Model Predicting rating-----------------------------------------------------------------
+  
+  output$rating_predict <- renderText({
+      # Split the dataset into training and testing datasets i.e. train(75%) and test(25%)
+    smp_size <- floor(0.75 * nrow(clean_play_store))
+    train_ind <-
+      sample(seq_len(nrow(clean_play_store)), size = smp_size)
+    train <- clean_play_store[train_ind, ]
+    test <- clean_play_store[-train_ind, ]
+    
+    # Fitting our models, Linear Regression model and Recursive Partitioning model based on user input
+    if (input$model == "Linear Regression") {
+      res_model <-
+        lm(rating ~ installs + types + category + reviews, data = train)
+    } else if(input$model == "Recursive partitioning"){
+      res_model <-
+        rpart(rating ~ installs + types + category + reviews, data = train)
+    }
+    #Create a dataset based on the user inputs for prediction
+    predict_data <-
+      data.frame(
+        "installs" = input$installs,
+        "types" = input$types,
+        "category" = input$category,
+        "reviews" = input$reviews
+      )
+    # predict the rating for the created dataset
+    predicted_rating <- predict(res_model, newdata = predict_data)
+    #display the rating predicted
+    paste("Predicted Rating: ", round(predicted_rating, 4))
+  })
+  
+  # Code below: help text to understand the plot output
+   output$inputs <- renderText({
+    paste("The above displayed graph shows ",input$nb_categories," ",input$category_sort," ","which have the rating in the range"," ",input$rating[1]," - ",input$rating[2])
+  })
+   
+  #-----Comparision of models code-----------------------------------------------------------------
+  #Plot for comparing model 
+  output$compare_models <-  renderPlotly ({
+    
+    # choosing model
+    if (input$radio_btn == 1) {
+      mdl <- "lm"
+    } else if (input$radio_btn == 2) {
+      mdl <- "rpart"
+    } else if (input$radio_btn == 3) {
+      mdl <- "loess"
+    }
+    
+    # choosing x-axis
+    if (input$x_inp == "Reviews") {
+      var_selected <- log10(clean_play_store$reviews) ^ 2
+    } else if (input$x_inp == "Installs") {
+      var_selected <- log10(clean_play_store$installs) ^ 2
+    } else if (input$x_inp == "Size(MB)") {
+      var_selected <- clean_play_store$size_mb
+    }
+    print(
+      ggplotly(
+        clean_play_store %>%
+          ggplot(aes(x = var_selected , y = rating)) +
+          geom_jitter(
+            na.rm = TRUE,
+            color =  custom_cols("blueish green"),
+            alpha = .4,
+            aes(text = paste(
+              "( x-axis: ", round(var_selected, 2), ", y-axis: " , rating, ")"
+            ))
+          ) +
+          geom_smooth(
+            method = mdl,
+            se = FALSE,
+            color = "blue",
+            na.rm = TRUE
+          ) +
+          labs(
+            title = "Jitter Plot",
+            subtitle = paste("log10(", input$x_inp , ")^2 vs rating"),
+            x = paste("Log10(", input$x_inp , ")^2"),
+            y = "Rating",
+            caption = "Source: google play store dataset"
+          ) +
+          theme(legend.title = element_text(
+            hjust = 0.5,
+            face = "bold",
+            size = 10
+          )),
+        tooltip = "text"
+      )
+    )
+  })
+}
+```
+
+
+```{r run app}
+# Run the application
+shinyApp(ui, server, options = list(height = 1080 , width = 1000))
+
+```
